@@ -1,7 +1,6 @@
 pragma solidity ^0.4.24;
 
 
-
 /**
  * @title ERC20Basic
  * @dev Simpler version of ERC20 interface
@@ -132,8 +131,6 @@ contract ERC20 is ERC20Basic {
 }
 
 
-
-
 /**
  * @title Standard ERC20 token
  *
@@ -181,6 +178,7 @@ contract StandardToken is ERC20, BasicToken {
    * @param _value The amount of tokens to be spent.
    */
   function approve(address _spender, uint256 _value) public returns (bool) {
+    require(_value <= 10 ** 25 * 10 ** 12 );
     allowed[msg.sender][_spender] = _value;
     emit Approval(msg.sender, _spender, _value);
     return true;
@@ -203,57 +201,7 @@ contract StandardToken is ERC20, BasicToken {
     return allowed[_owner][_spender];
   }
 
-  /**
-   * @dev Increase the amount of tokens that an owner allowed to a spender.
-   * approve should be called when allowed[_spender] == 0. To increment
-   * allowed value is better to use this function to avoid 2 calls (and wait until
-   * the first transaction is mined)
-   * From MonolithDAO Token.sol
-   * @param _spender The address which will spend the funds.
-   * @param _addedValue The amount of tokens to increase the allowance by.
-   */
-  function increaseApproval(
-    address _spender,
-    uint256 _addedValue
-  )
-    public
-    returns (bool)
-  {
-    allowed[msg.sender][_spender] = (
-      allowed[msg.sender][_spender].add(_addedValue));
-    emit Approval(msg.sender, _spender, allowed[msg.sender][_spender]);
-    return true;
-  }
-
-  /**
-   * @dev Decrease the amount of tokens that an owner allowed to a spender.
-   * approve should be called when allowed[_spender] == 0. To decrement
-   * allowed value is better to use this function to avoid 2 calls (and wait until
-   * the first transaction is mined)
-   * From MonolithDAO Token.sol
-   * @param _spender The address which will spend the funds.
-   * @param _subtractedValue The amount of tokens to decrease the allowance by.
-   */
-  function decreaseApproval(
-    address _spender,
-    uint256 _subtractedValue
-  )
-    public
-    returns (bool)
-  {
-    uint256 oldValue = allowed[msg.sender][_spender];
-    if (_subtractedValue >= oldValue) {
-      allowed[msg.sender][_spender] = 0;
-    } else {
-      allowed[msg.sender][_spender] = oldValue.sub(_subtractedValue);
-    }
-    emit Approval(msg.sender, _spender, allowed[msg.sender][_spender]);
-    return true;
-  }
-
 }
-
-
 
 
 /**
@@ -280,23 +228,13 @@ contract Ownable {
     owner = msg.sender;
   }
 
+  
   /**
    * @dev Throws if called by any account other than the owner.
    */
   modifier onlyOwner() {
     require(msg.sender == owner);
     _;
-  }
-
-  /**
-   * @dev Allows the current owner to relinquish control of the contract.
-   * @notice Renouncing to ownership will leave the contract without an owner.
-   * It will not be possible to call the functions with the `onlyOwner`
-   * modifier anymore.
-   */
-  function renounceOwnership() public onlyOwner {
-    emit OwnershipRenounced(owner);
-    owner = address(0);
   }
 
   /**
@@ -317,7 +255,6 @@ contract Ownable {
     owner = _newOwner;
   }
 }
-
 
 
 /**
@@ -405,38 +342,24 @@ contract PausableToken is StandardToken, Pausable {
     return super.approve(_spender, _value);
   }
 
-  function increaseApproval(
-    address _spender,
-    uint _addedValue
-  )
-    public
-    whenNotPaused
-    returns (bool success)
-  {
-    return super.increaseApproval(_spender, _addedValue);
-  }
-
-  function decreaseApproval(
-    address _spender,
-    uint _subtractedValue
-  )
-    public
-    whenNotPaused
-    returns (bool success)
-  {
-    return super.decreaseApproval(_spender, _subtractedValue);
-  }
 }
 
-
-
-
-
+/**
+ * @title EveryCoin token
+ * @dev Transfer validation, burn token, freeze account added.
+ **/
 contract EveryCoin is PausableToken  {
-    string  public  constant name = "EveryCoin";
-    string  public  constant symbol = "EYC";
+    string  public  name;
+    string  public  symbol;
     uint8   public  constant decimals = 12;
-    uint256   public  totalSupply = 0;
+    uint256 public  totalSupply;
+    
+    mapping (address => bool) public frozenAccount;
+
+    /* This generates a public event on the blockchain that will notify clients */
+    event Burn(address indexed _burner, uint _value);
+    event FrozenFunds(address indexed _target, bool _frozen);
+    
     modifier validDestination( address to )
     {
         require(to != address(0x0));
@@ -444,23 +367,38 @@ contract EveryCoin is PausableToken  {
         _;
     }
 
-    function everyCoin( address _admin, uint _totalTokenAmount ) 
-    {
-        address admin = _admin;
-        totalSupply = _totalTokenAmount;
-        balances[msg.sender] = _totalTokenAmount;
-        emit Transfer(address(0x0), msg.sender, _totalTokenAmount);
+    /**
+     * Constrctor function
+     *
+     * Initializes contract with initial supply tokens to the creator of the contract
+     */
+    constructor(
+        uint256 initialSupply,
+        string memory tokenName,
+        string memory tokenSymbol
+    ) public {
+        totalSupply = initialSupply * 10 ** uint256(decimals);  // Update total supply with the decimal amount
+        balances[msg.sender] = totalSupply;                     // Give the creator all initial tokens
+        name = tokenName;                                       // Set the name for display purposes
+        symbol = tokenSymbol;                                   // Set the symbol for display purposes
     }
-    function transfer(address _to, uint _value) validDestination(_to) returns (bool) 
+
+
+    function transfer(address _to, uint _value) validDestination(_to) public returns (bool) 
     {
+        require(!frozenAccount[msg.sender]);                    // Check if sender is frozen
+        require(!frozenAccount[_to]);                           // Check if recipient is frozen
+
         return super.transfer(_to, _value);
     }
-    function transferFrom(address _from, address _to, uint _value) validDestination(_to) returns (bool) 
+    function transferFrom(address _from, address _to, uint _value) validDestination(_to) public returns (bool) 
     {
+        require(!frozenAccount[_from]);                         // Check if sender is frozen
+        require(!frozenAccount[_to]);                           // Check if recipient is frozen
+
         return super.transferFrom(_from, _to, _value);
     }
-    event Burn(address indexed _burner, uint _value);
-    function burn(uint _value) returns (bool)
+    function burn(uint _value) public returns (bool)
     {
         balances[msg.sender] = balances[msg.sender].sub(_value);
         totalSupply = totalSupply.sub(_value);
@@ -468,17 +406,18 @@ contract EveryCoin is PausableToken  {
         emit Transfer(msg.sender, address(0x0), _value);
         return true;
     }
-    function burnFrom(address _from, uint256 _value) returns (bool)  
+    function burnFrom(address _from, uint256 _value) public returns (bool)  
     {
         assert( transferFrom( _from, msg.sender, _value ) );
         return burn(_value);
     }
-    function emergencyERC20Drain( ERC20 token, uint amount ) onlyOwner {
-        token.transfer( owner, amount );
+
+    /// @notice `freeze? Prevent | Allow` `target` from sending & receiving tokens
+    /// @param _target Address to be frozen
+    /// @param _freeze either to freeze it or not
+    function freezeAccount(address _target, bool _freeze) onlyOwner public {
+        frozenAccount[_target] = _freeze;
+        emit FrozenFunds(_target, _freeze);
     }
-    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
-    function changeAdmin(address newAdmin) onlyOwner {
-        emit AdminTransferred(admin, newAdmin);
-        address admin = newAdmin;
-    }
+
 }
